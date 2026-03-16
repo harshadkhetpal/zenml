@@ -3988,3 +3988,63 @@ def _print_key_value_table(
         rich_table.add_row(key_display, str(v))
 
     console.print(rich_table)
+
+
+def _infer_click_type(annotation: Any) -> click.ParamType | type[Any] | None:
+    """Best-effort annotation mapping to click option.
+
+    Args:
+        annotation: A model field's annotation (pydantic).
+
+    Returns:
+        A click option with type annotation.
+    """
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+
+    # Optional[T] / T | None
+    if origin is not None and args:
+        non_none_args = [arg for arg in args if arg is not type(None)]
+        if len(non_none_args) == 1:
+            return _infer_click_type(non_none_args[0])
+
+    if annotation is bool:
+        return bool
+    if annotation is int:
+        return int
+    if annotation is float:
+        return float
+    if annotation is str:
+        return str
+
+    return str
+
+
+def model_options(
+    model_cls: type[BaseModel],
+) -> Callable[[F], F]:
+    """CLI helper decorator. Expand a pydantic model to CLI options.
+
+    Args:
+        model_cls: The Pydantic model to expand to options.
+
+    Returns:
+        Decorated function with expanded click options.
+    """
+
+    def decorator(func: F) -> F:
+        for field_name, field_info in reversed(model_cls.model_fields.items()):
+            option_name = f"--{field_name.replace('_', '-')}"
+            click_type = _infer_click_type(field_info.annotation)
+
+            func = click.option(
+                option_name,
+                type=click_type,
+                default=None,
+                show_default=False,
+                help=field_info.description or "",
+            )(func)
+
+        return func
+
+    return decorator

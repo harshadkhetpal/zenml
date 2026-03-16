@@ -32,14 +32,11 @@ from zenml.utils import pydantic_utils
 from zenml.utils.tag_utils import Tag
 
 
-class PipelineRunConfiguration(
+class BasePipelineRunConfiguration(
     FrozenBaseModel, pydantic_utils.YAMLSerializationMixin
 ):
-    """Class for pipeline run configurations."""
+    """Base class for pipeline run configurations (triggers & one-off)."""
 
-    run_name: Optional[str] = Field(
-        default=None, description="The name of the pipeline run."
-    )
     enable_cache: Optional[bool] = Field(
         default=None,
         description="Whether to enable cache for all steps of the pipeline "
@@ -67,6 +64,23 @@ class PipelineRunConfiguration(
         default=None,
         description="Whether to enable heartbeat for all steps of the pipeline run",
     )
+    cache_policy: Optional[CachePolicyWithValidator] = Field(
+        default=None,
+        description="The cache policy for all steps of the pipeline run.",
+    )
+    execution_mode: Optional[ExecutionMode] = Field(
+        default=None,
+        description="The execution mode for the pipeline run.",
+    )
+
+
+class PipelineRunConfiguration(BasePipelineRunConfiguration):
+    """Class for pipeline run configurations."""
+
+    run_name: Optional[str] = Field(
+        default=None, description="The name of the pipeline run."
+    )
+
     schedule: Optional[Schedule] = Field(
         default=None, description="The schedule on which to run the pipeline."
     )
@@ -128,12 +142,4 @@ class PipelineRunConfiguration(
     )
     substitutions: Optional[Dict[str, str]] = Field(
         default=None, description="The substitutions for the pipeline run."
-    )
-    cache_policy: Optional[CachePolicyWithValidator] = Field(
-        default=None,
-        description="The cache policy for all steps of the pipeline run.",
-    )
-    execution_mode: Optional[ExecutionMode] = Field(
-        default=None,
-        description="The execution mode for the pipeline run.",
     )

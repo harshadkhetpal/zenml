@@ -18,7 +18,10 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple, Union
 from uuid import UUID
 
-from zenml.config.pipeline_run_configuration import PipelineRunConfiguration
+from zenml.config.pipeline_run_configuration import (
+    BasePipelineRunConfiguration,
+    PipelineRunConfiguration,
+)
 from zenml.enums import StackDeploymentProvider
 from zenml.models import (
     TRIGGER_RETURN_TYPE_UNION,
@@ -1762,13 +1765,17 @@ class ZenStoreInterface(ABC):
 
     @abstractmethod
     def attach_trigger_to_snapshot(
-        self, trigger_id: UUID, snapshot_id: UUID
+        self,
+        trigger_id: UUID,
+        snapshot_id: UUID,
+        run_configuration: BasePipelineRunConfiguration | None = None,
     ) -> None:
         """Attaches (links) a trigger to a snapshot.
 
         Args:
             trigger_id: The ID of the trigger.
             snapshot_id: The ID of the snapshot.
+            run_configuration: The configuration applied to subsequent runs.
 
         Raises:
             KeyError: if the entities don't exist.

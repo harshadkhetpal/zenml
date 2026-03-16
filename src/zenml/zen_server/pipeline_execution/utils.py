@@ -23,7 +23,6 @@ from uuid import UUID
 
 from packaging import version
 
-from zenml import LogsRequest
 from zenml.analytics.enums import AnalyticsEvent
 from zenml.analytics.utils import track_handler
 from zenml.config.base_settings import BaseSettings
@@ -49,6 +48,7 @@ from zenml.logger import get_logger
 from zenml.models import (
     CodeReferenceRequest,
     FlavorFilter,
+    LogsRequest,
     PipelineRunResponse,
     PipelineRunTriggerInfo,
     PipelineRunUpdate,
@@ -145,44 +145,16 @@ class BoundedThreadPoolExecutor:
         self._executor.shutdown(**kwargs)
 
 
-def run_snapshot(
-    snapshot: PipelineSnapshotResponse,
-    auth_context: AuthContext,
-    request: PipelineSnapshotRunRequest,
-    sync: bool = False,
-    template_id: Optional[UUID] = None,
-    create_new_snapshot: bool = True,
-    implicit_auth_context: bool = True,
-    wait_runner_pod: bool = True,
-    trigger_id: UUID | None = None,
-) -> PipelineRunResponse:
-    """Run a pipeline from a snapshot.
+def validate_snapshot_is_runnable(snapshot: PipelineSnapshotResponse) -> None:
+    """Runs a number of checks to ensure that a snapshot is valid for server execution.
 
     Args:
-        snapshot: The snapshot to run.
-        auth_context: Authentication context.
-        request: The run request.
-        sync: Whether to run the snapshot synchronously.
-        template_id: The ID of the template from which to create the snapshot
-            request.
-        create_new_snapshot: Whether to create a new, copy snapshot.
-        implicit_auth_context: Whether to use implicit auth context or create an explicit new one.
-        wait_runner_pod: Whether to wait for runner pod completion.
-        trigger_id: The trigger ID that generated the snapshot run (optional).
+        snapshot: A PipelineSnapshotResponse object.
 
     Raises:
-        ValueError: If the snapshot can not be run.
-        RuntimeError: If the server URL is not set in the server configuration.
-        MaxConcurrentTasksError: If the maximum number of concurrent run
-            snapshot tasks is reached.
-
-    Returns:
-        ID of the new pipeline run.
+        ValueError: If the snapshot or its components (build, stack) are not suitable
+            from server-side execution.
     """
-    if not implicit_auth_context:
-        set_auth_context(auth_context)
-    logger.info("Current auth context: %s", get_auth_context())
-
     if not snapshot.runnable:
         if stack := snapshot.stack:
             validate_stack_is_runnable_from_server(
@@ -215,21 +187,92 @@ def run_snapshot(
         )
 
     validate_stack_is_runnable_from_server(zen_store=zen_store(), stack=stack)
-    if request.run_configuration:
+
+
+def create_runnable_snapshot_from_source(
+    snapshot: PipelineSnapshotResponse,
+    run_configuration: PipelineRunConfiguration | None = None,
+    template_id: UUID | None = None,
+) -> PipelineSnapshotResponse:
+    """Creates a runnable snapshot from a source snapshot & a run config.
+
+    Notes:
+        - validate_snapshot_is_runnable is expected to run beforehand.
+
+    Args:
+        snapshot: A PipelineSnapshotResponse object.
+        run_configuration: A PipelineRunConfiguration object.
+        template_id: The ID of the template from which to create the snapshot request.
+
+    Returns:
+        A PipelineSnapshotResponse object.
+    """
+    if run_configuration:
         validate_run_config_is_runnable_from_server(
-            request.run_configuration, is_dynamic=snapshot.is_dynamic
+            run_configuration, is_dynamic=snapshot.is_dynamic
         )
 
     snapshot_request = snapshot_request_from_source_snapshot(
         source_snapshot=snapshot,
-        config=request.run_configuration or PipelineRunConfiguration(),
+        config=run_configuration or PipelineRunConfiguration(),
         template_id=template_id,
     )
 
-    ensure_async_orchestrator(snapshot=snapshot_request, stack=stack)
+    ensure_async_orchestrator(snapshot=snapshot_request, stack=snapshot.stack)  # type: ignore[arg-type]
+
+    return zen_store().create_snapshot(snapshot_request)
+
+
+def run_snapshot(
+    snapshot: PipelineSnapshotResponse,
+    auth_context: AuthContext,
+    request: PipelineSnapshotRunRequest,
+    sync: bool = False,
+    template_id: Optional[UUID] = None,
+    create_new_snapshot: bool = True,
+    implicit_auth_context: bool = True,
+    wait_runner_pod: bool = True,
+    trigger_id: UUID | None = None,
+) -> PipelineRunResponse:
+    """Run a pipeline from a snapshot.
+
+    Args:
+        snapshot: The snapshot to run.
+        auth_context: Authentication context.
+        request: The run request.
+        sync: Whether to run the snapshot synchronously.
+        template_id: The ID of the template from which to create the snapshot
+            request.
+        create_new_snapshot: Whether to create a new, copy snapshot.
+        implicit_auth_context: Whether to use implicit auth context or create an explicit new one.
+        wait_runner_pod: Whether to wait for runner pod completion.
+        trigger_id: The trigger ID that generated the snapshot run (optional).
+
+    Raises:
+        RuntimeError: If the server URL is not set in the server configuration.
+        MaxConcurrentTasksError: If the maximum number of concurrent run
+            snapshot tasks is reached.
+
+    Returns:
+        ID of the new pipeline run.
+    """
+    if not implicit_auth_context:
+        set_auth_context(auth_context)
+    logger.info("Current auth context: %s", get_auth_context())
+
+    validate_snapshot_is_runnable(snapshot=snapshot)
+
+    build = snapshot.build
+    assert build
+    stack = build.stack
+    assert stack
 
     if create_new_snapshot:
-        target_snapshot = zen_store().create_snapshot(snapshot_request)
+        target_snapshot = create_runnable_snapshot_from_source(
+            snapshot=snapshot,
+            run_configuration=request.run_configuration,
+            template_id=template_id,
+        )
     else:
         target_snapshot = snapshot
 
